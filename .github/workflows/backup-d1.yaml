@@ -37,18 +37,7 @@ jobs:
                   WEBDAV_URL: ${{ secrets.WEBDAV_URL }}
                   WEBDAV_USER: ${{ secrets.WEBDAV_USER }}
                   WEBDAV_PASSWORD: ${{ secrets.WEBDAV_PASSWORD }}
-                  BACKUP_REPO: ${{ secrets.BACKUP_REPO }}
-                  BACKUP_REPO_TOKEN: ${{ secrets.BACKUP_REPO_TOKEN }}
               run: |
-                  # Check private GitHub repo backend
-                  if [[ -n "$BACKUP_REPO" && -n "$BACKUP_REPO_TOKEN" ]]; then
-                    echo "REPO_ENABLED=true" >> $GITHUB_OUTPUT
-                    echo "✅ GitHub repo backend: enabled"
-                  else
-                    echo "REPO_ENABLED=false" >> $GITHUB_OUTPUT
-                    echo "⚠️ GitHub repo backend: disabled (missing BACKUP_REPO or BACKUP_REPO_TOKEN)"
-                  fi
-
                   # Check S3 backend
                   if [[ -n "$S3_ACCESS_KEY_ID" && -n "$S3_SECRET_ACCESS_KEY" && -n "$S3_BUCKET" && -n "$S3_REGION" ]]; then
                     echo "S3_ENABLED=true" >> $GITHUB_OUTPUT
@@ -123,38 +112,6 @@ jobs:
                     echo "Backup file: vault1_prod_${{ steps.date.outputs.date }}.sql.gz"
                     ls -lh *.sql.gz
                   fi
-
-            - name: Push to private GitHub backup repo
-              if: steps.backends.outputs.REPO_ENABLED == 'true'
-              env:
-                  BACKUP_REPO: ${{ secrets.BACKUP_REPO }}
-                  BACKUP_REPO_TOKEN: ${{ secrets.BACKUP_REPO_TOKEN }}
-                  KEEP: ${{ secrets.BACKUP_RETENTION_COUNT || 30 }}
-              run: |
-                  set -euo pipefail
-                  # Refuse to store unencrypted backups in git
-                  if ! ls vault1_prod_*.sql.gz.enc >/dev/null 2>&1; then
-                    echo "❌ BACKUP_ENCRYPTION_KEY is not set - refusing to push an unencrypted backup to git" >&2
-                    exit 1
-                  fi
-                  git clone --depth 1 "https://x-access-token:${BACKUP_REPO_TOKEN}@github.com/${BACKUP_REPO}.git" backup-repo
-                  mkdir -p backup-repo/production
-                  cp vault1_prod_*.sql.gz.enc backup-repo/production/
-
-                  # Keep only the newest $KEEP backups (filenames sort by date)
-                  ls -1 backup-repo/production/vault1_prod_* | sort -r | tail -n +$((KEEP + 1)) | xargs -r rm -f
-
-                  cd backup-repo
-                  git config user.name "warden-backup"
-                  git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-                  git add -A
-                  if git diff --cached --quiet; then
-                    echo "Nothing to commit"
-                    exit 0
-                  fi
-                  git commit -q -m "Backup ${{ steps.date.outputs.date }}"
-                  git push -q
-                  echo "✅ Backup pushed to private repo: production/$(ls -1 production | sort -r | head -n 1)"
 
             - name: Upload to S3
               if: steps.backends.outputs.S3_ENABLED == 'true'
